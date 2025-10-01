@@ -1,20 +1,40 @@
 // src/lib/api.js
-const BASE = import.meta.env.VITE_API_URL;
+const rawBase = import.meta.env.VITE_API_URL || "http://localhost:3000"; // ✅ 기본값
+// "http://localhost:3000/" 같은 경우 슬래시 제거
+const BASE = rawBase.replace(/\/+$/, "");
+
+function buildUrl(path) {
+    // path 앞의 중복 슬래시 제거
+    const clean = path.startsWith("/") ? path : `/${path}`;
+    return `${BASE}${clean}`; // ✅ 항상 BASE + /path
+}
 
 export async function api(path, { method = "GET", body, token } = {}) {
-    const res = await fetch(`${BASE}${path}`, {
+    const url = buildUrl(path);
+
+    const res = await fetch(url, {
         method,
         headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: body ? JSON.stringify(body) : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
         credentials: "include",
     });
 
-    const data = await res.json().catch(() => ({}));
+    // 응답이 JSON이 아닐 수도 있으니 안전하게 처리
+    let data = {};
+    try {
+        data = await res.json();
+    } catch (_) {
+        // no-op
+    }
+
     if (!res.ok) {
-        const msg = data?.message || `HTTP ${res.status}`;
+        // 서버 메시지가 있으면 그대로 노출
+        const msg = data?.message || `${res.status} ${res.statusText}`;
+        // 개발 시 무엇을 보냈는지 빠르게 추적하고 싶다면:
+        // console.error("[API ERROR]", method, url, "body:", body, "->", msg);
         throw new Error(msg);
     }
     return data;
@@ -27,20 +47,19 @@ export const API = {
     // 스탠드 관련
     getStand: (id) => api(`/api/stands/${id}`),
     getStands: () => api("/api/stands"),
-    rent: (id, slotNumber, userId, token) =>
+    rent: (id, slotNumber, _userId, token) =>
         api(`/api/stands/${id}/rent`, {
             method: "POST",
-            body: { slotNumber, userId },
+            body: { slotNumber }, // ✅ userId 필요 없음(서버가 토큰으로 식별)
             token,
         }),
-    ret: (id, slotNumber, userId, token) =>
+    // 반납은 이제 바디 필요 없음(서버가 유저의 대여 슬롯을 찾아 해제)
+    ret: (id, _slotNumber, _userId, token) =>
         api(`/api/stands/${id}/return`, {
             method: "POST",
-            body: { slotNumber, userId },
             token,
         }),
     listStands: () => api(`/api/stands`),
-
 
     // 로그 관련
     getLogsByUser: (userId, token) =>
@@ -49,6 +68,7 @@ export const API = {
     // 인증 관련
     me: (token) => api(`/api/auth/me`, { token }),
     register: (body) => api(`/api/auth/register`, { method: "POST", body }),
-    login: (body) => api(`/api/auth/login`, { method: "POST", body }),
+    login: ({ email, password }) =>
+        api(`/api/auth/login`, { method: "POST", body: { email, password } }), // ✅ 키 이름 보장
     logout: () => api(`/api/auth/logout`, { method: "POST" }),
 };
